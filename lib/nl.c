@@ -63,18 +63,56 @@
  */
 
 /**
- * Create file descriptor and bind socket.
+ * Create file descriptor.
  * @arg sk		Netlink socket (required)
  * @arg protocol	Netlink protocol to use (required)
+ *
+ * Creates a new Netlink socket using `socket()` . Fails if
+ * the socket is already connected.
+ */
+int nl_create_fd(struct nl_sock *sk, int protocol)
+{
+	int err, flags = 0;
+    int errsv;
+    char buf[64];
+
+
+#ifdef SOCK_CLOEXEC
+    if (sk->s_cloexec == 1)
+    	flags |= SOCK_CLOEXEC;
+#endif
+
+    if (sk->s_fd != -1)
+    		return -NLE_BAD_SOCK;
+
+    sk->s_fd = socket(AF_NETLINK, SOCK_RAW | flags, protocol);
+    if (sk->s_fd < 0) {
+		errsv = errno;
+		NL_DBG(4, "nl_connect(%p): socket() failed with %d (%s)\n", sk, errsv,
+				strerror_r(errsv, buf, sizeof(buf)));
+		err = -nl_syserr2nlerr(errsv);
+		goto errout;
+	}
+
+	return 0;
+
+errout:
+		if (sk->s_fd != -1) {
+			close(sk->s_fd);
+			sk->s_fd = -1;
+		}
+
+	return err;
+}
+
+/**
+ * Create file descriptor and bind socket.
+ * @arg sk      Netlink socket (required)
+ * @arg protocol    Netlink protocol to use (required)
  *
  * Creates a new Netlink socket using `socket()` and binds the socket to the
  * protocol and local port specified in the `sk` socket object. Fails if
  * the socket is already connected.
- *
- * @note If available, the `close-on-exec` (`SOCK_CLOEXEC`) feature is enabled
- *       automatically on the new file descriptor. This causes the socket to
- *       be closed automatically if any of the `exec` family functions succeed.
- *       This is essential for multi threaded programs.
  *
  * @note The local port (`nl_socket_get_local_port()`) is unspecified after
  *       creating a new socket. It only gets determined when accessing the
@@ -95,24 +133,46 @@
  */
 int nl_connect(struct nl_sock *sk, int protocol)
 {
-	int err, flags = 0;
+	int err = nl_create_fd(sk, protocol);
+	if (err != 0)
+		return err;
+
+	return nl_connect_fd(sk, protocol, sk->s_fd);
+}
+
+/**
+ * @arg sk      Netlink socket (required)
+ * @arg protocol    Netlink protocol to use (required)
+ * @arg fd      Socket file descriptor to use (required)
+ *
+ * @note The local port (`nl_socket_get_local_port()`) is unspecified after
+ *       creating a new socket. It only gets determined when accessing the
+ *       port the first time or during `nl_connect_fd()`. When nl_connect_fd()
+ *       fails during `bind()` due to `ADDRINUSE`, it will retry with
+ *       different ports if the port is unspecified. Unless you want to enforce
+ *       the use of a specific local port, don't access the local port (or
+ *       reset it to `unspecified` by calling `nl_socket_set_local_port(sk, 0)`).
+ *       This capability is indicated by
+ *       `%NL_CAPABILITY_NL_CONNECT_RETRY_GENERATE_PORT_ON_ADDRINUSE`.
+ *
+ * @see nl_socket_alloc()
+ * @see nl_close()
+ *
+ * @return 0 on success or a negative error code.
+ *
+ * @retval -NLE_BAD_SOCK Socket is not connected
+ */
+int nl_connect_fd(struct nl_sock *sk, int protocol, int fd)
+{
+	int err = 0;
 	int errsv;
 	socklen_t addrlen;
+	char buf[64];
 
-#ifdef SOCK_CLOEXEC
-	flags |= SOCK_CLOEXEC;
-#endif
+    if (fd < 0)
+        return -NLE_BAD_SOCK;
 
-        if (sk->s_fd != -1)
-                return -NLE_BAD_SOCK;
-
-	sk->s_fd = socket(AF_NETLINK, SOCK_RAW | flags, protocol);
-	if (sk->s_fd < 0) {
-		errsv = errno;
-		NL_DBG(4, "nl_connect(%p): socket() failed with %d\n", sk, errsv);
-		err = -nl_syserr2nlerr(errsv);
-		goto errout;
-	}
+    sk->s_fd = fd;
 
 	if (!(sk->s_flags & NL_SOCK_BUFSIZE_SET)) {
 		err = nl_socket_set_buffer_size(sk, 0, 0);
@@ -143,7 +203,8 @@ int nl_connect(struct nl_sock *sk, int protocol)
 				NL_DBG(4, "nl_connect(%p): local port %u already in use. Retry.\n", sk, (unsigned) port);
 				_nl_socket_used_ports_set(used_ports, port);
 			} else {
-				NL_DBG(4, "nl_connect(%p): bind() for port %u failed with %d\n", sk, (unsigned) port, errsv);
+				NL_DBG(4, "nl_connect(%p): bind() for port %u failed with %d (%s)\n",
+					sk, (unsigned) port, errsv, strerror_r(errsv, buf, sizeof(buf)));
 				_nl_socket_used_ports_release_all(used_ports);
 				err = -nl_syserr2nlerr(errsv);
 				goto errout;
@@ -155,7 +216,8 @@ int nl_connect(struct nl_sock *sk, int protocol)
 			   sizeof(sk->s_local));
 		if (err != 0) {
 			errsv = errno;
-			NL_DBG(4, "nl_connect(%p): bind() failed with %d\n", sk, errsv);
+			NL_DBG(4, "nl_connect(%p): bind() failed with %d (%s)\n",
+				sk, errsv, strerror_r(errsv, buf, sizeof(buf)));
 			err = -nl_syserr2nlerr(errsv);
 			goto errout;
 		}
@@ -165,6 +227,8 @@ int nl_connect(struct nl_sock *sk, int protocol)
 	err = getsockname(sk->s_fd, (struct sockaddr *) &sk->s_local,
 			  &addrlen);
 	if (err < 0) {
+		NL_DBG(4, "nl_connect(%p): getsockname() failed with %d (%s)\n",
+			sk, errno, strerror_r(errno, buf, sizeof(buf)));
 		err = -nl_syserr2nlerr(errno);
 		goto errout;
 	}
@@ -254,8 +318,13 @@ int nl_sendto(struct nl_sock *sk, void *buf, size_t size)
 
 	ret = sendto(sk->s_fd, buf, size, 0, (struct sockaddr *)
 		     &sk->s_peer, sizeof(sk->s_peer));
-	if (ret < 0)
+	if (ret < 0) {
+		char errbuf[64];
+
+		NL_DBG(4, "nl_sendto(%p): sendto() failed with %d (%s)\n",
+			sk, errno, strerror_r(errno, errbuf, sizeof(errbuf)));
 		return -nl_syserr2nlerr(errno);
+	}
 
 	return ret;
 }
@@ -312,8 +381,13 @@ int nl_sendmsg(struct nl_sock *sk, struct nl_msg *msg, struct msghdr *hdr)
 			return ret;
 
 	ret = sendmsg(sk->s_fd, hdr, 0);
-	if (ret < 0)
+	if (ret < 0) {
+		char errbuf[64];
+
+		NL_DBG(4, "nl_sendmsg(%p): sendmsg() failed with %d (%s)\n",
+			sk, errno, strerror_r(errno, errbuf, sizeof(errbuf)));
 		return -nl_syserr2nlerr(errno);
+	}
 
 	NL_DBG(4, "sent %d bytes\n", ret);
 	return ret;
@@ -671,10 +745,15 @@ retry:
 		goto abort;
 	}
 	if (n < 0) {
+		char errbuf[64];
+
 		if (errno == EINTR) {
 			NL_DBG(3, "recvmsg() returned EINTR, retrying\n");
 			goto retry;
 		}
+
+		NL_DBG(4, "nl_sendmsg(%p): nl_recv() failed with %d (%s)\n",
+			sk, errno, strerror_r(errno, errbuf, sizeof(errbuf)));
 		retval = -nl_syserr2nlerr(errno);
 		goto abort;
 	}
@@ -926,6 +1005,11 @@ continue_reading:
 					goto out;
 				}
 			} else if (e->error) {
+				char buf[64];
+
+				NL_DBG(4, "recvmsgs(%p): RTNETLINK responded with %d (%s)\n",
+					sk, -e->error, strerror_r(-e->error, buf, sizeof(buf)));
+
 				/* Error message reported back from kernel. */
 				if (cb->cb_err) {
 					err = cb->cb_err(&nla, e,
