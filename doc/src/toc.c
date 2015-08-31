@@ -49,6 +49,6 @@ Please post questions and patches to the libnl mailinglist:
 libnl@lists.infradead.org
 @endcode
 
-- Archives: http://canuck.infradead.org/pipermail/libnl/
+- Archives: http://lists.infradead.org/pipermail/libnl/
 
 */
