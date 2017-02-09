@@ -122,7 +122,7 @@ int nl_connect(struct nl_sock *sk, int protocol)
 		goto errout;
 	}
 
-	err = nl_socket_set_buffer_size(sk, 0, 0);
+	err = nl_socket_set_buffer_size(sk, 131702, 0);
 	if (err < 0)
 		goto errout;
 
