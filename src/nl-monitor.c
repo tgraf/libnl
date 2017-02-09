@@ -9,6 +9,7 @@
  * Copyright (c) 2003-2009 Thomas Graf <tgraf@suug.ch>
  */
 
+#include <sys/select.h>
 #include <netlink/cli/utils.h>
 #include <netlink/cli/link.h>
 
