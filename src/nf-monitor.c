@@ -11,6 +11,7 @@
  * Copyright (c) 2007 Secure Computing Corporation
  */
 
+#include <sys/select.h>
 #include <netlink/cli/utils.h>
 #include <netlink/netfilter/nfnl.h>
 
