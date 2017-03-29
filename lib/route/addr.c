@@ -673,7 +673,7 @@ int rtnl_addr_build_add_request(struct rtnl_addr *addr, int flags,
  *
  * @see rtnl_addr_build_add_request()
  *
- * @return 0 on sucess or a negative error if an error occured.
+ * @return 0 on success or a negative error if an error occured.
  */
 int rtnl_addr_add(struct nl_sock *sk, struct rtnl_addr *addr, int flags)
 {
@@ -745,7 +745,7 @@ int rtnl_addr_build_delete_request(struct rtnl_addr *addr, int flags,
  *
  * @see rtnl_addr_build_delete_request();
  *
- * @return 0 on sucess or a negative error if an error occured.
+ * @return 0 on success or a negative error if an error occured.
  */
 int rtnl_addr_delete(struct nl_sock *sk, struct rtnl_addr *addr, int flags)
 {
